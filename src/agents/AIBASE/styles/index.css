@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Requested Variables */
+  --primary-color: #5555ff;
+  --secondary-color: white;
+  --text-color: black;
+  --sub-text-color: #9ca38f;
+
+  /* Derived/Additional Variables for UI Completeness & Tailwind Support */
+  --primary-rgb: 85 85 255;
+  /* Enables opacity utils like bg-primary/10 */
+  --surface-color: #f8f9fc;
+  --border-color: #eef2f6;
+}
+
+body {
+  background: var(--secondary-color);
+  color: var(--text-color);
+  font-family: 'Inter', sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sub-text-color);
+}
