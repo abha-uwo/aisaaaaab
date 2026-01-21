@@ -11,13 +11,12 @@ import { detectIntent, extractReminderDetails, detectLanguage, getVoiceSystemIns
 import Reminder from "../models/Reminder.js";
 import { requiresWebSearch, extractSearchQuery, processSearchResults, getWebSearchSystemInstruction } from "../utils/webSearch.js";
 import { performWebSearch } from "../services/searchService.js";
-
-
+import { convertFile } from "../utils/fileConversion.js";
 
 
 const router = express.Router();
 // Get all chat sessions (summary)
-router.post("/", async (req, res) => {
+router.post("/", verifyToken, async (req, res) => {
   const { content, history, systemInstruction, image, document, language } = req.body;
 
   try {
@@ -39,8 +38,11 @@ router.post("/", async (req, res) => {
     let parts = [];
 
     // Use mode-specific system instruction, or fallback to provided systemInstruction
-    // Web search instruction takes priority if available
+    // CRITICAL: FILE_CONVERSION instructions must take priority over frontend generic prompts
     let finalSystemInstruction = systemInstruction || modeSystemInstruction;
+    if (detectedMode === 'FILE_CONVERSION') {
+      finalSystemInstruction = modeSystemInstruction;
+    }
 
     if (finalSystemInstruction) {
       parts.push({ text: `System Instruction: ${finalSystemInstruction}` });
@@ -171,6 +173,80 @@ router.post("/", async (req, res) => {
       }
     }
 
+    // File Conversion: Check if this is a conversion request
+    let conversionResult = null;
+
+    if (detectedMode === 'FILE_CONVERSION') {
+      console.log('[FILE CONVERSION] Conversion request detected');
+
+      // First, get AI response to extract conversion parameters
+      const tempContentPayload = { role: "user", parts: parts };
+      const tempStreamingResult = await generativeModel.generateContentStream({ contents: [tempContentPayload] });
+      const tempResponse = await tempStreamingResult.response;
+      const aiResponse = tempResponse.text();
+
+      console.log('[FILE CONVERSION] AI Response:', aiResponse);
+
+      // Try to extract JSON from AI response (handle markdown backticks too)
+      const jsonRegex = /```(?:json)?\s*(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})\s*```|(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})/;
+      const jsonMatch = aiResponse.match(jsonRegex);
+
+      if (jsonMatch && allAttachments.length > 0) {
+        try {
+          const rawJson = jsonMatch[1] || jsonMatch[2];
+          const conversionParams = JSON.parse(rawJson);
+          console.log('[FILE CONVERSION] Parsed params:', conversionParams);
+
+          // Get the first attachment (assuming single file conversion)
+          const attachment = allAttachments[0];
+
+          // Convert base64 to buffer
+          const base64Data = attachment.base64Data || attachment.data;
+
+          if (!base64Data) {
+            throw new Error('No file data received for conversion');
+          }
+
+          const fileBuffer = Buffer.from(base64Data, 'base64');
+
+          // Perform conversion
+          const convertedBuffer = await convertFile(
+            fileBuffer,
+            conversionParams.source_format,
+            conversionParams.target_format
+          );
+
+          // Convert result to base64
+          const convertedBase64 = convertedBuffer.toString('base64');
+
+          // Determine output filename
+          const originalName = conversionParams.file_name || 'document';
+          const baseName = originalName.replace(/\.(pdf|docx?|doc)$/i, '');
+          const outputExtension = conversionParams.target_format === 'pdf' ? 'pdf' : 'docx';
+          const outputFileName = `${baseName}_converted.${outputExtension}`;
+
+          conversionResult = {
+            success: true,
+            file: convertedBase64,
+            fileName: outputFileName,
+            mimeType: conversionParams.target_format === 'pdf'
+              ? 'application/pdf'
+              : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            message: aiResponse.replace(jsonMatch[0], '').trim()
+          };
+
+          console.log('[FILE CONVERSION] Conversion successful:', outputFileName);
+
+        } catch (conversionError) {
+          console.error('[FILE CONVERSION] Conversion failed:', conversionError);
+          conversionResult = {
+            success: false,
+            error: conversionError.message
+          };
+        }
+      }
+    }
+
     // For Google Generative AI SDK, we pass the parts directly (or a prompt string) as the "contents".
     // It accepts an array of Content objects, or a simple string/array of parts.
     // However, since we are sending a single turn of "user" content (that includes history context manually mocked), we just send the parts array wrapped in strict format if needed, or just the parts.
@@ -225,7 +301,23 @@ router.post("/", async (req, res) => {
       reply = "I understood your request but couldn't generate a text response.";
     }
 
-    return res.status(200).json({ reply });
+    // Return response with conversion result if available
+    const response = { reply };
+
+    if (conversionResult) {
+      if (conversionResult.success) {
+        response.conversion = {
+          file: conversionResult.file,
+          fileName: conversionResult.fileName,
+          mimeType: conversionResult.mimeType
+        };
+        response.reply = conversionResult.message || reply;
+      } else {
+        response.reply = `Conversion failed: ${conversionResult.error}`;
+      }
+    }
+
+    return res.status(200).json(response);
   } catch (err) {
     const fs = await import('fs');
     try {
@@ -257,6 +349,13 @@ Stack: ${err.stack}
 router.get('/', verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
+
+    // Check DB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('[DB] MongoDB unreachable. Returning empty sessions.');
+      return res.json([]);
+    }
+
     const user = await userModel.findById(userId).populate({
       path: 'chatSessions',
       select: 'sessionId title lastModified',
@@ -276,6 +375,12 @@ router.get('/:sessionId', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const userId = req.user.id;
+
+    // Check DB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('[DB] MongoDB unreachable. Returning empty history.');
+      return res.json({ sessionId, messages: [] });
+    }
 
     // Optional: Verify that the session belongs to this user
     // For now, finding by sessionId is okay as sessionIds are unique/random
@@ -326,6 +431,12 @@ router.post('/:sessionId/message', verifyToken, async (req, res) => {
           }
         }
       }
+    }
+
+    // Check DB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('[DB] MongoDB unreachable. Skipping message save.');
+      return res.json({ sessionId, messages: [message], dummy: true });
     }
 
     const session = await ChatSession.findOneAndUpdate(
