@@ -120,6 +120,24 @@ const Chat = () => {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const [selectedToolType, setSelectedToolType] = useState(null);
 
+  // Guest User Chat Limits
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [guestChatCount, setGuestChatCount] = useState(0);
+
+  // Check if user is logged in and initialize guest chat count
+  useEffect(() => {
+    const user = localStorage.getItem('user');
+    const token = localStorage.getItem('token');
+    const isAuthenticated = !!(user && token && user !== 'null' && user !== 'undefined');
+    setIsLoggedIn(isAuthenticated);
+
+    // Load guest chat count from localStorage if not logged in
+    if (!isAuthenticated) {
+      const savedCount = localStorage.getItem('guestChatCount');
+      setGuestChatCount(savedCount ? parseInt(savedCount, 10) : 0);
+    }
+  }, []);
+
   // Close menu on click outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -144,6 +162,12 @@ const Chat = () => {
 
   const processFile = (file) => {
     if (!file) return;
+
+    // Block file uploads for guest users
+    if (!isLoggedIn) {
+      toast.error('Please log in to upload files and images');
+      return;
+    }
 
     // Validate file type
     const validTypes = [
@@ -179,6 +203,19 @@ const Chat = () => {
   };
 
   const handlePaste = (e) => {
+    // Block paste for guest users
+    if (!isLoggedIn && (e.clipboardData.files?.length > 0 || e.clipboardData.items)) {
+      // Check if there are files in clipboard
+      const hasFiles = e.clipboardData.files?.length > 0 ||
+        Array.from(e.clipboardData.items || []).some(item => item.kind === 'file');
+
+      if (hasFiles) {
+        e.preventDefault();
+        toast.error('Please log in to upload files and images');
+        return;
+      }
+    }
+
     // Handle files pasted from file system
     if (e.clipboardData.files && e.clipboardData.files.length > 0) {
       e.preventDefault();
@@ -341,6 +378,22 @@ const Chat = () => {
     const contentToSend = typeof overrideContent === 'string' ? overrideContent : inputValue.trim();
 
     if ((!contentToSend && filePreviews.length === 0) || isLoading) return;
+
+    // Guest Chat Limits - Check before processing
+    if (!isLoggedIn) {
+      // Block if guest has already sent 4 messages
+      if (guestChatCount >= 4) {
+        toast.error('You have reached the free message limit. Please log in to continue chatting! 🔒', {
+          duration: 6000,
+          icon: '⚠️',
+          style: {
+            background: '#ef4444',
+            color: '#fff',
+          },
+        });
+        return;
+      }
+    }
 
     isSendingRef.current = true;
 
@@ -535,6 +588,25 @@ ${activeAgent.instructions}` : ''}
     } finally {
       setIsLoading(false);
       isSendingRef.current = false;
+
+      // Increment guest chat count if not logged in (only on successful send)
+      if (!isLoggedIn) {
+        const newCount = guestChatCount + 1;
+        setGuestChatCount(newCount);
+        localStorage.setItem('guestChatCount', newCount.toString());
+
+        // Show reminder after 2nd message
+        if (newCount === 2) {
+          toast('💡 Tip: Log in to save your chats and unlock all features!', {
+            duration: 5000,
+            icon: '🔐',
+            style: {
+              background: '#3b82f6',
+              color: '#fff',
+            },
+          });
+        }
+      }
     }
   };
 
@@ -1484,75 +1556,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
         pricing={TOOL_PRICING}
       />
 
-      <div
-        className={`
-          flex flex-col flex-shrink-0 bg-surface border-r border-border
-          transition-all duration-300 ease-in-out
-          
-          /* Mobile: Absolute overlay */
-          absolute inset-y-0 left-0 z-50 w-full sm:w-72
-          ${showHistory ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
 
-          /* Desktop: Relative flow, animate width instead of transform */
-          lg:relative lg:inset-auto lg:shadow-none lg:translate-x-0
-          ${showHistory ? 'lg:w-72' : 'lg:w-0 lg:border-none lg:overflow-hidden'}
-        `}
-      >
-        <div className="p-3">
-          <div className="flex justify-between items-center mb-3 lg:hidden">
-            <span className="font-bold text-lg text-maintext">History</span>
-            <button
-              onClick={() => setShowHistory(false)}
-              className="p-2 hover:bg-secondary rounded-full text-subtext transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <button
-            onClick={handleNewChat}
-            className="w-full bg-primary hover:opacity-90 text-white font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg shadow-primary/20 text-sm"
-          >
-            <Plus className="w-4 h-4" /> New Chat
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
-          <h3 className="px-4 py-2 text-xs font-semibold text-subtext uppercase tracking-wider">
-            Recent
-          </h3>
-
-          {sessions.map((session) => (
-            <div key={session.sessionId} className="group relative px-2">
-              <button
-                onClick={() => navigate(`/dashboard/chat/${session.sessionId}`)}
-                className={`w-full text-left px-4 py-3 rounded-lg text-sm transition-colors truncate
-                  ${currentSessionId === session.sessionId
-                    ? 'bg-card text-primary shadow-sm border border-border'
-                    : 'text-subtext hover:bg-card hover:text-maintext'
-                  }
-                `}
-              >
-                <div className="font-medium truncate pr-6">{session.title}</div>
-                <div className="text-[10px] text-subtext/70">
-                  {new Date(session.lastModified).toLocaleDateString()}
-                </div>
-              </button>
-              <button
-                onClick={(e) => handleDeleteSession(e, session.sessionId)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 text-subtext hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Delete Chat"
-              >
-                <Plus className="w-4 h-4 rotate-45" />
-              </button>
-            </div>
-          ))}
-
-          {sessions.length === 0 && (
-            <div className="px-4 text-xs text-subtext italic">No recent chats</div>
-          )}
-        </div>
-      </div>
 
       {/* Main Area */}
       <div
@@ -1571,13 +1575,6 @@ For "Remix" requests with an attachment, analyze the attached image, then create
         {/* Header */}
         <div className="h-12 md:h-14 border-b border-border flex items-center justify-between px-3 md:px-4 bg-secondary z-10 shrink-0 gap-2">
           <div className="flex items-center gap-2 min-w-0">
-
-            <button
-              className="p-2 -ml-2 text-subtext hover:text-maintext shrink-0"
-              onClick={() => setShowHistory(!showHistory)}
-            >
-              <History className="w-5 h-5" />
-            </button>
 
             <div className="flex items-center gap-2 text-subtext min-w-0">
               <span className="text-sm hidden sm:inline shrink-0">Chatting with:</span>
@@ -2247,7 +2244,17 @@ For "Remix" requests with an attachment, analyze the attached image, then create
               <button
                 type="button"
                 ref={attachBtnRef}
-                onClick={() => setIsAttachMenuOpen(!isAttachMenuOpen)}
+                onClick={() => {
+                  // Show login prompt for guests when they try to upload
+                  if (!isLoggedIn) {
+                    toast.error('Please log in to upload files and images', {
+                      duration: 4000,
+                      icon: '🔒'
+                    });
+                    return;
+                  }
+                  setIsAttachMenuOpen(!isAttachMenuOpen);
+                }}
                 className={`p-3 sm:p-4 rounded-full border border-primary bg-primary text-white transition-all duration-300 shadow-lg shadow-primary/20 shrink-0 flex items-center justify-center hover:opacity-90
                   ${isAttachMenuOpen ? 'rotate-45' : ''}`}
                 title="Add to chat"

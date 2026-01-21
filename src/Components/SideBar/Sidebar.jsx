@@ -29,6 +29,7 @@ import axios from 'axios';
 import { useLanguage } from '../../context/LanguageContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
+import { chatStorageService } from '../../services/chatStorageService';
 
 const Sidebar = ({ isOpen, onClose }) => {
   const { t, language, region, regionFlags } = useLanguage();
@@ -50,6 +51,7 @@ const Sidebar = ({ isOpen, onClose }) => {
   const [issueText, setIssueText] = useState("");
   const [activeTab, setActiveTab] = useState("faq");
   const [issueType, setIssueType] = useState("General Inquiry");
+  const [chatSessions, setChatSessions] = useState([]);
 
   const issueOptions = [
     "General Inquiry",
@@ -130,6 +132,24 @@ const Sidebar = ({ isOpen, onClose }) => {
       return () => clearInterval(interval);
     }
   }, [token])
+
+  // Fetch chat sessions
+  useEffect(() => {
+    const loadSessions = async () => {
+      try {
+        const sessions = await chatStorageService.getSessions();
+        setChatSessions(sessions || []);
+      } catch (error) {
+        console.error('Failed to load chat sessions:', error);
+        setChatSessions([]);
+      }
+    };
+    loadSessions();
+
+    // Refresh sessions every 10 seconds to stay updated
+    const interval = setInterval(loadSessions, 10000);
+    return () => clearInterval(interval);
+  }, []);
   if (notifiyTgl.notify) {
     setTimeout(() => {
       setNotifyTgl({ notify: false })
@@ -191,12 +211,49 @@ const Sidebar = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Navigation */}
-        <div className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
-          <NavLink to="/dashboard/chat" className={navItemClass} onClick={onClose}>
+        {/* New Chat Button */}
+        <div className="px-3 py-2">
+          <button
+            onClick={() => {
+              navigate('/dashboard/chat/new');
+              onClose();
+            }}
+            className="w-full bg-white hover:bg-gray-100 border border-gray-300 text-gray-800 font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors text-sm shadow-sm"
+          >
             <MessageSquare className="w-5 h-5" />
-            <span>{t('chat')}</span>
-          </NavLink>
+            New chat
+          </button>
+        </div>
+
+        {/* Navigation - Your Chats */}
+        <div className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
+          <h3 className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Your chats
+          </h3>
+
+          {chatSessions.length === 0 ? (
+            <p className="px-3 py-4 text-xs text-gray-400 italic">No past conversations.</p>
+          ) : (
+            <div className="space-y-1">
+              {chatSessions.map((session) => (
+                <button
+                  key={session.sessionId}
+                  onClick={() => {
+                    navigate(`/dashboard/chat/${session.sessionId}`);
+                    onClose();
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg transition-colors hover:bg-gray-50 text-gray-700 group"
+                >
+                  <p className="text-sm font-medium truncate group-hover:text-gray-900">
+                    {session.title || 'Untitled Chat'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {new Date(session.lastModified).toLocaleDateString()}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* User Profile Footer */}
