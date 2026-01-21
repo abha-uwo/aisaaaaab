@@ -26,7 +26,6 @@ import feedbackRoutes from './routes/feedbackRoutes.js';
 import voiceRoutes from './routes/voiceRoutes.js';
 // import paymentRoutes from './routes/paymentRoutes.js';
 
-
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT
@@ -100,6 +99,11 @@ app.use('/api/auth', authRoutes);
 
 // Voice Routes
 app.use('/api/voice', voiceRoutes);
+
+
+// Image Routes
+import imageRoutes from './routes/image.routes.js';
+app.use('/api/image', imageRoutes);
 
 
 // Global Error Handler
