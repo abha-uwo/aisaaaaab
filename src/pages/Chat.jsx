@@ -118,6 +118,7 @@ const Chat = () => {
 
   // Attachment Menu State
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [listeningTime, setListeningTime] = useState(0);
   const timerRef = useRef(null);
@@ -128,11 +129,16 @@ const Chat = () => {
   const [selectedToolType, setSelectedToolType] = useState(null);
   const [currentMode, setCurrentMode] = useState('NORMAL_CHAT');
   const [isDeepSearch, setIsDeepSearch] = useState(false);
+  const [isImageGeneration, setIsImageGeneration] = useState(false);
   const abortControllerRef = useRef(null);
+
+  const toolsBtnRef = useRef(null);
+  const toolsMenuRef = useRef(null);
 
   // Close menu on click outside
   useEffect(() => {
     const handleClickOutside = (event) => {
+      // Close Attach Menu
       if (
         menuRef.current &&
         !menuRef.current.contains(event.target) &&
@@ -141,9 +147,19 @@ const Chat = () => {
       ) {
         setIsAttachMenuOpen(false);
       }
+
+      // Close Tools Menu
+      if (
+        toolsMenuRef.current &&
+        !toolsMenuRef.current.contains(event.target) &&
+        toolsBtnRef.current &&
+        !toolsBtnRef.current.contains(event.target)
+      ) {
+        setIsToolsMenuOpen(false);
+      }
     };
 
-    if (isAttachMenuOpen) {
+    if (isAttachMenuOpen || isToolsMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
 
@@ -305,14 +321,14 @@ const Chat = () => {
     }
   };
 
-  const handleGenerateImage = async () => {
+  const handleGenerateImage = async (overridePrompt) => {
     try {
-      if (!inputRef.current?.value.trim()) {
+      if (!inputRef.current?.value.trim() && !overridePrompt) {
         toast.error('Please enter a prompt for image generation');
         return;
       }
 
-      const prompt = inputRef.current.value;
+      const prompt = overridePrompt || inputRef.current.value;
       setIsLoading(true);
 
       // Show a message that image generation is in progress
@@ -571,6 +587,13 @@ const Chat = () => {
     if (isListening && recognitionRef.current) {
       recognitionRef.current.stop();
       setIsListening(false);
+    }
+
+    // Handle Image Generation Mode
+    if (isImageGeneration) {
+      handleGenerateImage(contentToSend); // Pass content directly if needed, or handleGenerateImage uses ref/state
+      isSendingRef.current = false; // Reset sending ref since handleGenerateImage might handle it differently or we want to allow next send
+      return;
     }
 
     try {
@@ -2817,39 +2840,6 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                           </div>
                         </label>
                       )}
-
-                      <button
-                        onClick={() => {
-                          setIsAttachMenuOpen(false);
-                          handleGenerateImage();
-                        }}
-                        className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-primary/5 rounded-xl transition-all group cursor-pointer"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-surface border border-border flex items-center justify-center group-hover:border-primary/30 group-hover:bg-primary/10 transition-colors shrink-0">
-                          <ImageIcon className="w-4 h-4 text-subtext group-hover:text-primary transition-colors" />
-                        </div>
-                        <div className="flex-1">
-                          <span className="text-sm font-medium text-maintext group-hover:text-primary transition-colors">Generate Image</span>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsAttachMenuOpen(false);
-                          setIsDeepSearch(!isDeepSearch);
-                          if (!isDeepSearch) toast.success("Deep Search Mode Enabled");
-                        }}
-                        className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-xl transition-all group cursor-pointer ${isDeepSearch ? 'bg-primary/10 border border-primary/20' : 'hover:bg-primary/5'}`}
-                      >
-                        <div className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors shrink-0 ${isDeepSearch ? 'bg-primary border-primary text-white' : 'bg-surface border-border group-hover:border-primary/30 group-hover:bg-primary/10'}`}>
-                          <Search className={`w-4 h-4 transition-colors ${isDeepSearch ? 'text-white' : 'text-subtext group-hover:text-primary'}`} />
-                        </div>
-                        <div className="flex-1">
-                          <span className={`text-sm font-medium transition-colors ${isDeepSearch ? 'text-primary' : 'text-maintext group-hover:text-primary'}`}>
-                            Deep Search {isDeepSearch && '(Active)'}
-                          </span>
-                        </div>
-                      </button>
                     </div>
                   </motion.div>
                 )}
@@ -2866,7 +2856,102 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                 <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
 
+              {/* Tools Button */}
+              <div className="relative">
+                <button
+                  type="button"
+                  ref={toolsBtnRef}
+                  onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
+                  className={`p-3 sm:p-4 rounded-full border transition-all duration-300 shrink-0 flex items-center justify-center hover:bg-surface-hover ${isToolsMenuOpen ? 'bg-surface-hover border-primary text-primary' : 'bg-surface border-border text-subtext'}`}
+                  title="AI Tools"
+                >
+                  <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+                <AnimatePresence>
+                  {isToolsMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      ref={toolsMenuRef}
+                      className="absolute bottom-full left-0 mb-3 w-64 bg-surface border border-border/50 rounded-2xl shadow-xl overflow-hidden z-30 backdrop-blur-md ring-1 ring-black/5"
+                    >
+                      <div className="p-3 bg-secondary/30 border-b border-border mb-1">
+                        <h3 className="text-xs font-bold text-subtext uppercase tracking-wider">AI Capabilities</h3>
+                      </div>
+                      <div className="p-1.5 space-y-0.5">
+                        <button
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            setIsImageGeneration(!isImageGeneration);
+                            setIsDeepSearch(false);
+                            if (!isImageGeneration) toast.success("Image Generation Mode Enabled");
+                          }}
+                          className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-xl transition-all group cursor-pointer ${isImageGeneration ? 'bg-primary/10 border border-primary/20' : 'hover:bg-primary/5'}`}
+                        >
+                          <div className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors shrink-0 ${isImageGeneration ? 'bg-primary border-primary text-white' : 'bg-surface border-border group-hover:border-primary/30 group-hover:bg-primary/10'}`}>
+                            <ImageIcon className={`w-4 h-4 transition-colors ${isImageGeneration ? 'text-white' : 'text-subtext group-hover:text-primary'}`} />
+                          </div>
+                          <div className="flex-1">
+                            <span className={`text-sm font-medium transition-colors ${isImageGeneration ? 'text-primary' : 'text-maintext group-hover:text-primary'}`}>
+                              Generate Image {isImageGeneration && '(Active)'}
+                            </span>
+                            <p className="text-[10px] text-subtext leading-none mt-0.5">Create visuals from text</p>
+                          </div>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsToolsMenuOpen(false);
+                            setIsDeepSearch(!isDeepSearch);
+                            setIsImageGeneration(false);
+                            if (!isDeepSearch) toast.success("Deep Search Mode Enabled");
+                          }}
+                          className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-xl transition-all group cursor-pointer ${isDeepSearch ? 'bg-primary/10 border border-primary/20' : 'hover:bg-primary/5'}`}
+                        >
+                          <div className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors shrink-0 ${isDeepSearch ? 'bg-primary border-primary text-white' : 'bg-surface border-border group-hover:border-primary/30 group-hover:bg-primary/10'}`}>
+                            <Search className={`w-4 h-4 transition-colors ${isDeepSearch ? 'text-white' : 'text-subtext group-hover:text-primary'}`} />
+                          </div>
+                          <div className="flex-1">
+                            <span className={`text-sm font-medium transition-colors ${isDeepSearch ? 'text-primary' : 'text-maintext group-hover:text-primary'}`}>
+                              Deep Search {isDeepSearch && '(Active)'}
+                            </span>
+                            <p className="text-[10px] text-subtext leading-none mt-0.5">Complex research & analysis</p>
+                          </div>
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <div className="relative flex-1">
+                {/* Quick Suggestion Chips */}
+                {!inputValue.trim() && !isDeepSearch && !isImageGeneration && filePreviews.length === 0 && (
+                  <div className="absolute bottom-full left-0 mb-4 flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar pointer-events-auto w-full px-1">
+                    <button
+                      onClick={() => {
+                        setIsImageGeneration(true);
+                        toast.success("Image Mode: Type your prompt!");
+                        setTimeout(() => inputRef.current?.focus(), 100);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-surface/80 hover:bg-surface border border-border/50 hover:border-primary/30 rounded-full shadow-lg backdrop-blur-md transition-all group"
+                    >
+                      <ImageIcon className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform" />
+                      <span className="text-xs font-bold text-maintext">Create image</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        inputRef.current?.focus();
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-surface/80 hover:bg-surface border border-border/50 hover:border-primary/30 rounded-full shadow-lg backdrop-blur-md transition-all group"
+                    >
+                      <Edit2 className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform" />
+                      <span className="text-xs font-bold text-maintext">Write anything</span>
+                    </button>
+                  </div>
+                )}
                 <AnimatePresence>
                   {isDeepSearch && (
                     <motion.div
@@ -2883,6 +2968,26 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                         type="button"
                         onClick={() => setIsDeepSearch(false)}
                         className="ml-1 p-0.5 hover:bg-sky-500/20 rounded-md transition-colors text-sky-600 dark:text-sky-400"
+                      >
+                        <X size={12} />
+                      </button>
+                    </motion.div>
+                  )}
+                  {isImageGeneration && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9, y: 5 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 5 }}
+                      className="absolute bottom-full left-0 mb-3 flex items-center gap-2.5 px-3 py-1.5 bg-pink-500/10 dark:bg-pink-500/20 border border-pink-500/30 rounded-xl backdrop-blur-md shadow-lg shadow-pink-500/5 z-20 pointer-events-auto"
+                    >
+                      <div className="flex items-center justify-center w-5 h-5 rounded-full bg-pink-500 text-white">
+                        <ImageIcon size={10} strokeWidth={3} />
+                      </div>
+                      <span className="text-[10px] font-bold text-pink-600 dark:text-pink-400 uppercase tracking-widest">Image Generation Active</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsImageGeneration(false)}
+                        className="ml-1 p-0.5 hover:bg-pink-500/20 rounded-md transition-colors text-pink-600 dark:text-pink-400"
                       >
                         <X size={12} />
                       </button>
