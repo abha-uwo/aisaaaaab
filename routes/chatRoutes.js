@@ -230,7 +230,12 @@ router.post("/", verifyToken, async (req, res) => {
       const tempContentPayload = { role: "user", parts: parts };
       const tempStreamingResult = await generativeModel.generateContentStream({ contents: [tempContentPayload] });
       const tempResponse = await tempStreamingResult.response;
-      const aiResponse = tempResponse.text();
+      let aiResponse = "";
+      if (typeof tempResponse.text === 'function') {
+        aiResponse = tempResponse.text();
+      } else if (tempResponse.candidates && tempResponse.candidates.length > 0 && tempResponse.candidates[0].content && tempResponse.candidates[0].content.parts && tempResponse.candidates[0].content.parts.length > 0) {
+        aiResponse = tempResponse.candidates[0].content.parts[0].text;
+      }
 
       console.log('[FILE CONVERSION] AI Response:', aiResponse);
 
