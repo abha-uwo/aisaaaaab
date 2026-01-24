@@ -664,40 +664,27 @@ const Chat = () => {
 
         let PERSONA_INSTRUCTION = "";
 
-        // 1. TONE & STYLE
-        if (pStyle.baseStyle && pStyle.baseStyle !== 'Default') {
-          PERSONA_INSTRUCTION += `\n### ADOPT THIS PERSONA:\n- Style: ${pStyle.baseStyle}\n`;
-          if (pStyle.baseStyle === 'Professional') PERSONA_INSTRUCTION += "- Be formal, objective, and precise. Avoid slang.\n";
-          else if (pStyle.baseStyle === 'Friendly') PERSONA_INSTRUCTION += "- Be warm, engaging, and helpful. Use natural language.\n";
-          else if (pStyle.baseStyle === 'Casual') PERSONA_INSTRUCTION += "- Be relaxed and conversational. Treat user as a friend.\n";
-          else if (pStyle.baseStyle === 'Technical') PERSONA_INSTRUCTION += "- Focus on technical accuracy, deep details, and terminology.\n";
-          else if (pStyle.baseStyle === 'Mentor') PERSONA_INSTRUCTION += "- Guide the user. Explain concepts patiently. Encourage learning.\n";
+        // 1. STYLE & FONT (Font is UI only, but we can hint at TONE)
+        if (pStyle.fontStyle && pStyle.fontStyle !== 'Default') {
+          // No direct AI instruction needed for font family, but we can adjust tone if needed
         }
 
         // 2. CHARACTERISTICS
-        if (pStyle.warmth) PERSONA_INSTRUCTION += `- Warmth Level: ${pStyle.warmth}\n`;
         if (pStyle.enthusiasm) PERSONA_INSTRUCTION += `- Enthusiasm Level: ${pStyle.enthusiasm}\n`;
         if (pStyle.formality) PERSONA_INSTRUCTION += `- Formality Level: ${pStyle.formality}\n`;
+        if (pStyle.creativity) PERSONA_INSTRUCTION += `- Creativity Level: ${pStyle.creativity}\n`;
 
         // 3. FORMATTING
         if (pStyle.structuredResponses) PERSONA_INSTRUCTION += "- FORMAT: Use clear Headers, Sections, and structured layouts.\n";
         if (pStyle.bulletPoints) PERSONA_INSTRUCTION += "- FORMAT: Prioritize Bullet Points and Lists over paragraphs.\n";
 
         // 4. EMOJI USAGE
-        // Note: The 'emojiUsage' key might be string or boolean depending on implement, assuming string from dropdown.
-        // Since dropdown has "None", "Minimal", "Moderate", "Expressive"
-        // I'll map these.
-        // Wait, in dropdown Step 1 refactor I actually didn't see explicit Emoji logic? 
-        // Ah, I replaced content so maybe I missed adding a specific Emoji block in the 'no-icon' version? 
-        // Let's check context. PersonalizationContext stores whatever we push. 
-        // The user prompt asked for Emoji Usage: None/Minimal/Moderate/Expressive.
-        // Let's assume the user sets this via the context (even if UI might need a tweak later if I missed it, but I think I added sliders for traits instead?)
-        // Actually, looking at my Step 794 replacement, I replaced the 'Characteristics Sliders' but I *did not* explicitly see an Emoji section in the replacement code block.
-        // Let's add the logic here regardless, in case it's in stored preferences.
-        // CHECK: I see I missed adding Emoji UI in Step 794? 
-        // No, I added 'Characteristics Sliders' and 'Output Format'. 
-        // I might have omitted Emoji specific UI in the 'minimalist' pass or it's implicitly part of 'Enthusiasm'.
-        // Let's stick to valid inputs.
+        if (pStyle.emojiUsage) {
+          if (pStyle.emojiUsage === 'None') PERSONA_INSTRUCTION += "- EMOJIS: Do NOT use any emojis or icons.\n";
+          else if (pStyle.emojiUsage === 'Minimal') PERSONA_INSTRUCTION += "- EMOJIS: Use very few emojis, only where absolutely necessary.\n";
+          else if (pStyle.emojiUsage === 'Moderate') PERSONA_INSTRUCTION += "- EMOJIS: Use a moderate amount of relevant emojis.\n";
+          else if (pStyle.emojiUsage === 'Expressive') PERSONA_INSTRUCTION += "- EMOJIS: Use emojis frequently to be engaging and expressive.\n";
+        }
 
         // 5. CUSTOM INSTRUCTIONS override
         if (pStyle.customInstructions) {
@@ -719,7 +706,7 @@ const Chat = () => {
         }
 
         // 8. TEXT SIZE / ACCESSIBILITY (Frontend only mostly, but hint AI)
-        if (pGeneral.fontSize === 'Large' || pGeneral.highContrast) {
+        if (pStyle.fontSize === 'Large' || pStyle.fontSize === 'Extra Large' || pGeneral.highContrast) {
           PERSONA_INSTRUCTION += `- FORMAT: Use shorter sentences and very clear structure for readability.\n`;
         }
 
@@ -2126,7 +2113,11 @@ For "Remix" requests with an attachment, analyze the attached image, then create
         <div
           ref={chatContainerRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto p-2 sm:p-4 md:p-5 space-y-2.5 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+          className={`flex-1 overflow-y-auto p-2 sm:p-4 md:p-5 space-y-2.5 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent ${personalizations?.personalization?.fontStyle === 'Serif' ? 'font-serif' :
+            personalizations?.personalization?.fontStyle === 'Mono' ? 'font-mono' :
+              personalizations?.personalization?.fontStyle === 'Rounded' ? 'font-rounded' :
+                personalizations?.personalization?.fontStyle === 'Sans' ? 'font-sans' : ''
+            } aisa-scalable-text`}
         >
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-4 animate-in fade-in duration-700">
@@ -2166,7 +2157,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                       } max-w-[85%] sm:max-w-[80%]`}
                   >
                     <div
-                      className={`group/bubble relative px-4 py-2 rounded-2xl text-sm leading-normal whitespace-pre-wrap break-words shadow-sm w-fit max-w-full transition-all duration-300 min-h-[40px] ${msg.role === 'user'
+                      className={`group/bubble relative px-4 py-2 rounded-2xl leading-normal whitespace-pre-wrap break-words shadow-sm w-fit max-w-full transition-all duration-300 min-h-[40px] ${msg.role === 'user'
                         ? 'bg-primary text-white rounded-tr-none block px-5 py-3 rounded-3xl'
                         : `bg-surface border border-border text-maintext rounded-tl-none block ${msg.id === typingMessageId ? 'ai-typing-glow ai-typing-shimmer outline outline-offset-1 outline-primary/20' : ''}`
                         }`}
@@ -2348,7 +2339,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                         </div>
                       ) : (
                         msg.content && (
-                          <div id={`msg-text-${msg.id}`} className={`max-w-full break-words text-sm md:text-base leading-relaxed whitespace-normal ${msg.role === 'user' ? 'text-white' : 'text-maintext'}`}>
+                          <div id={`msg-text-${msg.id}`} className={`max-w-full break-words leading-relaxed whitespace-normal ${msg.role === 'user' ? 'text-white' : 'text-maintext'}`}>
                             {msg.role === 'user' && msg.mode === MODES.DEEP_SEARCH && (
                               <div className="flex items-center gap-1.5 mb-2 px-2 py-1 bg-white/20 rounded-lg w-fit">
                                 <Search size={10} className="text-white" />
@@ -2381,9 +2372,9 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                                 ul: ({ children }) => <ul className="list-disc pl-5 mb-3 last:mb-0 space-y-1.5 marker:text-subtext">{children}</ul>,
                                 ol: ({ children }) => <ol className="list-decimal pl-5 mb-3 last:mb-0 space-y-1.5 marker:text-subtext">{children}</ol>,
                                 li: ({ children }) => <li className="mb-1 last:mb-0">{children}</li>,
-                                h1: ({ children }) => <h1 className="text-base font-bold mb-2 mt-3 block">{children}</h1>,
-                                h2: ({ children }) => <h2 className="text-sm font-bold mb-1.5 mt-2 block">{children}</h2>,
-                                h3: ({ children }) => <h3 className="text-xs font-bold mb-1 mt-1.5 block">{children}</h3>,
+                                h1: ({ children }) => <h1 className="font-bold mb-2 mt-3 block text-[1.25em]">{children}</h1>,
+                                h2: ({ children }) => <h2 className="font-bold mb-1.5 mt-2 block text-[1.15em]">{children}</h2>,
+                                h3: ({ children }) => <h3 className="font-bold mb-1 mt-1.5 block text-[1.05em]">{children}</h3>,
                                 strong: ({ children }) => <strong className="font-bold text-primary">{children}</strong>,
                                 code: ({ node, inline, className, children, ...props }) => {
                                   const match = /language-(\w+)/.exec(className || '');
@@ -2406,7 +2397,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                                           </button>
                                         </div>
                                         <div className="p-4 overflow-x-auto custom-scrollbar bg-[#1e1e1e]">
-                                          <code className={`${className} font-mono text-sm leading-relaxed text-[#d4d4d4] block min-w-full`} {...props}>
+                                          <code className={`${className} font-mono text-[0.9em] leading-relaxed text-[#d4d4d4] block min-w-full`} {...props}>
                                             {children}
                                           </code>
                                         </div>
@@ -2414,7 +2405,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                                     );
                                   }
                                   return (
-                                    <code className="bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded text-sm font-mono text-primary font-bold mx-0.5" {...props}>
+                                    <code className="bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded font-mono text-primary font-bold mx-0.5" {...props}>
                                       {children}
                                     </code>
                                   );
@@ -2927,31 +2918,7 @@ For "Remix" requests with an attachment, analyze the attached image, then create
               </div>
 
               <div className="relative flex-1">
-                {/* Quick Suggestion Chips */}
-                {!inputValue.trim() && !isDeepSearch && !isImageGeneration && filePreviews.length === 0 && (
-                  <div className="absolute bottom-full left-0 mb-4 flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar pointer-events-auto w-full px-1">
-                    <button
-                      onClick={() => {
-                        setIsImageGeneration(true);
-                        toast.success("Image Mode: Type your prompt!");
-                        setTimeout(() => inputRef.current?.focus(), 100);
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-surface/80 hover:bg-surface border border-border/50 hover:border-primary/30 rounded-full shadow-lg backdrop-blur-md transition-all group"
-                    >
-                      <ImageIcon className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-maintext">Create image</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        inputRef.current?.focus();
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-surface/80 hover:bg-surface border border-border/50 hover:border-primary/30 rounded-full shadow-lg backdrop-blur-md transition-all group"
-                    >
-                      <Edit2 className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-maintext">Write anything</span>
-                    </button>
-                  </div>
-                )}
+
                 <AnimatePresence>
                   {isDeepSearch && (
                     <motion.div
@@ -3006,8 +2973,13 @@ For "Remix" requests with an attachment, analyze the attached image, then create
                   onPaste={handlePaste}
                   placeholder="Ask AISA..."
                   rows={1}
-                  className={`w-full bg-surface border rounded-2xl py-2 md:py-3 pl-4 sm:pl-5 text-sm md:text-base text-maintext placeholder-subtext focus:outline-none shadow-sm transition-all resize-none overflow-y-auto custom-scrollbar 
+                  className={`w-full bg-surface border rounded-2xl py-2 md:py-3 pl-4 sm:pl-5 text-maintext placeholder-subtext focus:outline-none shadow-sm transition-all resize-none overflow-y-auto custom-scrollbar 
                     ${isDeepSearch ? 'border-sky-500 ring-2 ring-sky-500/20' : 'border-border focus:border-primary focus:ring-1 focus:ring-primary'} 
+                    ${personalizations?.personalization?.fontStyle === 'Serif' ? 'font-serif' :
+                      personalizations?.personalization?.fontStyle === 'Mono' ? 'font-mono' :
+                        personalizations?.personalization?.fontStyle === 'Rounded' ? 'font-rounded' :
+                          personalizations?.personalization?.fontStyle === 'Sans' ? 'font-sans' : ''}
+                    aisa-scalable-text
                     ${inputValue.trim() ? 'pr-20 md:pr-24' : 'pr-32 md:pr-40'}`}
                   style={{ minHeight: '40px', maxHeight: '150px' }}
                 />
