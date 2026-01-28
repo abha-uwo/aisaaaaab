@@ -54,24 +54,33 @@ export const createOrder = async (req, res) => {
             return res.status(200).json({ message: "Plan updated to Basic", user: updatedUser, amount: 0 });
         }
 
-        // Use a shorter orderId (Paytm limit is technically 50, but shorter is safer)
-        const orderId = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
+        // 1. Generate Order ID
+        const orderId = `PY${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 999)}`;
 
         const amountFormatted = parseFloat(amount).toFixed(2);
-        const mid = process.env.PAYTM_MERCHANT_ID.trim();
-        const key = process.env.PAYTM_MERCHANT_KEY.trim();
+        const mid = (process.env.PAYTM_MERCHANT_ID || "").trim();
+        const key = (process.env.PAYTM_MERCHANT_KEY || "").trim();
         const websiteFromEnv = (process.env.PAYTM_WEBSITE || "WEBSTAGING").trim();
         const callbackUrl = (process.env.PAYTM_CALLBACK_URL || `http://localhost:5173/payment/verify`).trim();
 
-        // Determine if we are in staging mode
-        const isStagingEnv = websiteFromEnv === 'WEBSTAGING' || mid.toLowerCase().includes('stage') || mid.startsWith('SrctYa');
-        const defaultHostname = isStagingEnv ? 'securegw-stage.paytm.in' : 'securegw.paytm.in';
+        if (!mid || !key) {
+            return res.status(500).json({ error: "Missing Paytm credentials" });
+        }
 
-        const initiateAttempt = async (targetWebsite, targetHostname) => {
+        if (key.length !== 16) {
+            console.warn(`[Paytm] WARNING: Merchant Key length is ${key.length}, expected 16.`);
+        }
+
+        console.log(`[Paytm] Initiating Order: ${orderId} | MID: ${mid}`);
+
+        const isStaging = mid.startsWith('SrctYa') || websiteFromEnv === 'WEBSTAGING';
+        const hostname = isStaging ? 'securegw-stage.paytm.in' : 'securegw.paytm.in';
+
+        const initiateTransaction = async (website, channel, industry) => {
             const body = {
                 requestType: "Payment",
                 mid: mid,
-                websiteName: targetWebsite,
+                websiteName: website,
                 orderId: orderId,
                 callbackUrl: callbackUrl,
                 txnAmount: {
@@ -79,25 +88,28 @@ export const createOrder = async (req, res) => {
                     currency: "INR",
                 },
                 userInfo: {
-                    custId: userId.toString(),
+                    custId: "CUST001",
                 }
             };
 
-            // Standard JS Checkout often requires these
-            body.channelId = (process.env.PAYTM_CHANNEL_ID || "WEB").trim();
-            body.industryTypeId = (process.env.PAYTM_INDUSTRY_TYPE || "Retail").trim();
+            if (channel) body.channelId = channel;
+            if (industry) body.industryTypeId = industry;
 
             const bodyString = JSON.stringify(body);
             const signature = await PaytmChecksum.generateSignature(bodyString, key);
 
             const payload = {
-                head: { signature: signature },
+                head: {
+                    mid: mid, // Added MID to head - required by some v1 setups
+                    signature: signature,
+                    version: "v1"
+                },
                 body: body
             };
 
-            const url = `https://${targetHostname}/theia/api/v1/initiateTransaction?mid=${mid}&orderId=${orderId}`;
+            const url = `https://${hostname}/theia/api/v1/initiateTransaction?mid=${mid}&orderId=${orderId}`;
 
-            console.log(`[Paytm] [${targetWebsite}] [${targetHostname}] Initiating...`);
+            console.log(`[Paytm] Testing: ${website} | ${channel} | ${industry}`);
 
             return axios.post(url, payload, {
                 headers: { 'Content-Type': 'application/json' },
@@ -105,19 +117,33 @@ export const createOrder = async (req, res) => {
             });
         };
 
-        // Attempt 1: Using Env Config
-        let response = await initiateAttempt(websiteFromEnv, defaultHostname);
-        let paytmRes = response.data;
+        const trials = [
+            { w: websiteFromEnv, c: "WEB", i: "Retail" },
+            { w: "DEFAULT", c: "WEB", i: "Retail" },
+            { w: websiteFromEnv, c: "WAP", i: "Retail" }
+        ];
 
-        // Attempt 2: If 501 and it was WEBSTAGING, try DEFAULT on the SAME hostname
-        if (paytmRes.body?.resultInfo?.resultCode === "501" && websiteFromEnv === "WEBSTAGING") {
-            console.warn(`[Paytm] WEBSTAGING failed. Retrying with DEFAULT on ${defaultHostname}...`);
-            response = await initiateAttempt("DEFAULT", defaultHostname);
-            paytmRes = response.data;
+        let paytmRes = null;
+        let success = false;
+
+        for (let i = 0; i < trials.length; i++) {
+            try {
+                const response = await initiateTransaction(trials[i].w, trials[i].c, trials[i].i);
+                paytmRes = response.data;
+
+                if (paytmRes.body?.resultInfo?.resultStatus === 'S') {
+                    console.log(`[Paytm] Success! Combination ${i + 1} worked.`);
+                    success = true;
+                    break;
+                }
+
+                console.warn(`[Paytm] Trial ${i + 1} failed: ${paytmRes.body?.resultInfo?.resultCode} - ${paytmRes.body?.resultInfo?.resultMsg}`);
+            } catch (err) {
+                console.error(`[Paytm] Connection Error: ${err.message}`);
+            }
         }
 
-        if (paytmRes.body && paytmRes.body.resultInfo && paytmRes.body.resultInfo.resultStatus === 'S') {
-            console.log("[Paytm] Init Success. Token obtained.");
+        if (success && paytmRes) {
             res.status(200).json({
                 txnToken: paytmRes.body.txnToken,
                 orderId: orderId,
@@ -125,18 +151,17 @@ export const createOrder = async (req, res) => {
                 mid: mid
             });
         } else {
-            console.error("[Paytm] Init Failed. Final Response:", JSON.stringify(paytmRes, null, 2));
+            console.error("[Paytm] All efforts failed. Last Response:", JSON.stringify(paytmRes, null, 2));
             res.status(500).json({
-                error: "Paytm Init Failed",
-                code: paytmRes.body?.resultInfo?.resultCode,
-                details: paytmRes.body?.resultInfo?.resultMsg || "Unknown Error",
+                error: "Paytm Gateway Error (501)",
+                details: "Gateway failed to respond. Please check if your Staging MID/Key are still active in the Paytm Dashboard.",
                 raw: paytmRes
             });
         }
 
     } catch (error) {
-        console.error("Paytm Order Error:", error);
-        res.status(500).json({ error: "Failed to create payment order" });
+        console.error("Critical Paytm Error:", error.message);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 };
 
