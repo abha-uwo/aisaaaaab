@@ -46,10 +46,10 @@ export const generateVideo = async (req, res) => {
 };
 
 // Function to generate video using Replicate or Fallback
-// Function to generate video using Vertex AI or Fallback
+// Function to generate video using Vertex AI (Veo Model) or Fallback
 export const generateVideoFromPrompt = async (prompt, duration, quality) => {
   try {
-    logger.info('[VIDEO] Attempting generation via Vertex AI (text-to-video)...');
+    logger.info('[VIDEO] Attempting generation via Vertex AI Veo (veo-001-preview)...');
 
     const auth = new GoogleAuth({
       scopes: 'https://www.googleapis.com/auth/cloud-platform',
@@ -60,9 +60,9 @@ export const generateVideoFromPrompt = async (prompt, duration, quality) => {
     const accessTokenResponse = await client.getAccessToken();
     const token = accessTokenResponse.token || accessTokenResponse;
 
-    // Use 'text-to-video' model (Imagen 2)
-    const modelId = 'text-to-video';
-    const location = 'us-central1'; // Vertex AI Video models are often in us-central1
+    // Use Veo model
+    const modelId = 'veo-001-preview';
+    const location = 'us-central1'; // Veo is available in us-central1
     const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:predict`;
 
     const response = await axios.post(
@@ -70,8 +70,9 @@ export const generateVideoFromPrompt = async (prompt, duration, quality) => {
       {
         instances: [{ prompt: prompt }],
         parameters: {
-          videoLengthSeconds: duration || 5,
-          sampleCount: 1
+          video_length_seconds: duration || 5, // Veo param might use underscores
+          sampleCount: 1,
+          aspectRatio: "16:9"
         }
       },
       {
@@ -83,14 +84,19 @@ export const generateVideoFromPrompt = async (prompt, duration, quality) => {
     );
 
     if (response.data && response.data.predictions && response.data.predictions[0]) {
-      // Assuming response contains base64 string directly or implicitly structure
-      // Structure check: predictions[0].bytesBase64Encoded ??
-      // Wait, response format for text-to-video often returns a struct with 'video' or 'bytesBase64Encoded'
-      // Let's safe check keys.
       const prediction = response.data.predictions[0];
-      // Common patterns: prediction.bytesBase64Encoded, prediction.video.bytesBase64Encoded, or just string if configured
-      // We'll inspect or try 
-      const base64Data = prediction.bytesBase64Encoded || prediction.video?.bytesBase64Encoded || (typeof prediction === 'string' ? prediction : null);
+
+      // Veo often returns a 'video' object containing 'bytesBase64Encoded' OR 'gcsUri'
+      // We check for base64 first
+      let base64Data = prediction.bytesBase64Encoded || prediction.video?.bytesBase64Encoded;
+
+      // As valid fallback for older models or variations
+      if (!base64Data && typeof prediction === 'string') {
+        base64Data = prediction;
+      }
+
+      // If we only get a GCS URI (Cloud Storage), we can't upload to Cloudinary directly from here easily without downloading
+      // BUT, checking logs, Veo usually supports base64 for short clips.
 
       if (base64Data) {
         const buffer = Buffer.from(base64Data, 'base64');
@@ -99,17 +105,18 @@ export const generateVideoFromPrompt = async (prompt, duration, quality) => {
           resource_type: 'video',
           folder: 'aisa_generated_videos'
         });
-        logger.info(`[VERTEX VIDEO] Uploaded to Cloudinary: ${uploadResult.secure_url}`);
+        logger.info(`[VERTEX VEO] Uploaded to Cloudinary: ${uploadResult.secure_url}`);
         return uploadResult.secure_url;
+      } else {
+        logger.warn("[VERTEX VEO] No base64 data found. Full prediction keys:", Object.keys(prediction));
       }
     }
 
-    throw new Error('Vertex AI did not return a valid video payload.');
+    throw new Error('Vertex AI Veo did not return a valid video payload.');
 
   } catch (error) {
+    logger.error(`[VERTEX VIDEO ERROR] ${error.message} - Helper fallback normally would trigger here.`);
     throw error;
-    // Fallback deprecated by user request
-    // return await generateVideoWithPollinations(prompt, duration, quality);
   }
 };
 

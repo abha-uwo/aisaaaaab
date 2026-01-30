@@ -10,6 +10,11 @@ import authRoutes from "./routes/authRoutes.js";
 import cookieParser from "cookie-parser";
 import emailVerification from "./routes/emailVerification.js"
 import userRoute from './routes/user.js'
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import chatRoute from './routes/chat.routes.js';
 import knowledgeRoute from './routes/knowledge.routes.js';
@@ -65,7 +70,11 @@ app.get("/ping-top", (req, res) => {
   res.send("Top ping works");
 })
 
-app.get("/", (req, res) => {
+// (Static serving removed for separate frontend deployment)
+// app.use(express.static(path.join(__dirname, 'public')));
+
+// API Health Check (moved from root)
+app.get("/api/health", (req, res) => {
   res.send("All working")
 })
 // Global Debug middleware
@@ -107,7 +116,10 @@ app.use('/api/aibase/knowledge', knowledgeRoute);
 
 // --- End of Routes ---
 
-// Catch-all 404
+// (SPA Catch-all removed for separate frontend deployment)
+// app.get('*', ...);
+
+// Catch-all 404 for API routes
 app.use((req, res) => {
   console.warn(`[404 NOT MATCHED] ${req.method} ${req.originalUrl}`);
   res.status(404).json({

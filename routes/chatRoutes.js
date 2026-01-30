@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import express from "express"
 import ChatSession from "../models/ChatSession.js"
-import { generativeModel, genAIInstance } from "../config/vertex.js";
+import { generativeModel, genAIInstance, modelName as primaryModelName } from "../config/vertex.js";
 import userModel from "../models/User.js";
 import { verifyToken } from "../middleware/authorization.js";
 import { uploadToCloudinary } from "../services/cloudinary.service.js";
@@ -380,7 +380,7 @@ router.post("/", verifyToken, async (req, res) => {
         try {
           console.log(`[GEMINI] Trying model: ${mName}`);
           // If it's the default model, use it directly, otherwise get it from instance with v1
-          const model = mName === "gemini-1.5-flash-latest" ? generativeModel : genAIInstance.getGenerativeModel({ model: mName }, { apiVersion: 'v1' });
+          const model = (mName === primaryModelName || mName === "gemini-1.5-flash-001" || mName === "gemini-1.5-flash-latest") ? generativeModel : genAIInstance.getGenerativeModel({ model: mName });
 
           // Add timeout to prevent hanging
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000));
@@ -388,7 +388,12 @@ router.post("/", verifyToken, async (req, res) => {
 
           const result = await Promise.race([resultPromise, timeoutPromise]);
           const response = await result.response;
-          const text = response.text();
+          let text = '';
+          if (typeof response.text === 'function') {
+            text = response.text();
+          } else if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
+            text = response.candidates[0].content.parts[0].text;
+          }
           if (text) return text;
           throw new Error("Empty response");
         } catch (mErr) {
@@ -398,11 +403,11 @@ router.post("/", verifyToken, async (req, res) => {
       };
 
       try {
-        return await tryModel("gemini-1.5-flash-latest");
+        return await tryModel(primaryModelName || "gemini-1.5-flash-001");
       } catch (err1) {
         console.warn("[GEMINI] Falling back to gemini-1.5-pro-latest...");
         try {
-          return await tryModel("gemini-1.5-pro-latest");
+          return await tryModel("gemini-1.5-pro-001");
         } catch (err2) {
           throw new Error(`All models failed. Last error: ${err2.message}`);
         }
@@ -436,52 +441,128 @@ router.post("/", verifyToken, async (req, res) => {
     };
 
     // Check for Media (Video/Image) Generation Action
+    // Check for Media (Video/Image) Generation Action
     try {
       console.log(`[MEDIA GEN] Analyzing reply: "${reply.substring(0, 100)}..."`);
 
-      // 1. Check for JSON-based triggers
-      const jsonRegex = /\{[\s\S]*?"action":\s*"(generate_video|generate_image)"[\s\S]*?\}/;
-      const jsonMatch = reply.match(jsonRegex);
+      // Helper to extract JSON object with balanced braces
+      const extractActionJson = (text) => {
+        // 1. Try to anchor on "action": "..." (support single/double quotes)
+        // We match strictly to avoid false positives, but allow slight whitespace variance
+        const anchorRegex = /["']action["']\s*:\s*["'](generate_video|generate_image)["']/;
+        const actionMatch = text.match(anchorRegex);
 
-      if (jsonMatch) {
-        let jsonStr = jsonMatch[0];
-        console.log(`[MEDIA GEN] Found trigger JSON: ${jsonStr}`);
+        if (actionMatch) {
+          const actionIndex = actionMatch.index;
+          // Find the starting brace '{' before the action
+          let startIndex = text.lastIndexOf('{', actionIndex);
 
-        try {
-          const data = JSON.parse(jsonStr);
-          // REMOVE processed JSON from the reply text immediately to prevent UI from showing it
-          reply = reply.replace(jsonMatch[0], '').trim();
+          if (startIndex !== -1) {
+            // Attempt balanced brace counting
+            let openBraces = 0;
+            let endIndex = -1;
+            let inString = false;
+            let escape = false;
 
-          if (data.action === 'generate_video' && data.prompt) {
-            console.log(`[VIDEO GEN] Calling generator for: ${data.prompt}`);
-            const videoUrl = await generateVideoFromPrompt(data.prompt, 5, 'medium');
-            if (videoUrl) {
-              finalResponse.videoUrl = videoUrl;
-              finalResponse.reply = reply || `Sure, I've generated a video based on your request: "${data.prompt.substring(0, 50)}..."`;
-            } else {
-              finalResponse.reply = reply || "I attempted to generate a video but encountered an error.";
-            }
-          }
-          else if (data.action === 'generate_image' && data.prompt) {
-            console.log(`[IMAGE GEN] Calling generator for: ${data.prompt}`);
-            // Use a shorter version of prompt for Fallback just in case
-            const safePrompt = data.prompt.length > 400 ? data.prompt.substring(0, 400) : data.prompt;
+            for (let i = startIndex; i < text.length; i++) {
+              const char = text[i];
+              if (escape) { escape = false; continue; }
+              if (char === '\\') { escape = true; continue; }
+              if (char === '"' || char === "'") { inString = !inString; continue; } // Simplistic quote handling
 
-            try {
-              const imageUrl = await generateImageFromPrompt(data.prompt);
-              if (imageUrl) {
-                finalResponse.imageUrl = imageUrl;
-                finalResponse.reply = reply || "Here is the image you requested.";
+              if (!inString) {
+                if (char === '{') {
+                  openBraces++;
+                } else if (char === '}') {
+                  openBraces--;
+                  if (openBraces === 0) {
+                    endIndex = i + 1;
+                    break;
+                  }
+                }
               }
-            } catch (imgError) {
-              console.warn(`[IMAGE GEN] Vertex failed. Falling back to Pollinations.`);
-              const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 1000000)}&model=flux`;
-              finalResponse.imageUrl = pollinationsUrl;
-              finalResponse.reply = reply || "I've generated this image for you using my fallback engine.";
+            }
+
+            if (endIndex !== -1) {
+              const jsonStr = text.substring(startIndex, endIndex);
+              try {
+                const parsed = JSON.parse(jsonStr); // Strict JSON header check
+                return { data: parsed, raw: jsonStr };
+              } catch (e) {
+                // Try loose parsing (e.g. if keys are not quoted or single quoted)
+                // We can't use eval safely, but we can try simple regex extraction if strict parse failed
+                console.warn("[MEDIA GEN] Strict JSON parse failed, trying fallback regex extraction...");
+              }
             }
           }
-        } catch (parseError) {
-          console.error("[MEDIA GEN] Trigger parse failed:", parseError.message);
+        }
+
+        // 2. Fallback: classic greedy Regex (works for 99% of simple cases)
+        // Matches { ... "action": "generate_video" ... }
+        const simpleRegex = /\{[\s\S]*?["']action["']\s*:\s*["'](generate_video|generate_image)["'][\s\S]*?\}/;
+        const simpleMatch = text.match(simpleRegex);
+        if (simpleMatch) {
+          try {
+            return { data: JSON.parse(simpleMatch[0]), raw: simpleMatch[0] };
+          } catch (e) {
+            console.error("[MEDIA GEN] Fallback regex matched but parse failed:", e.message);
+          }
+        }
+
+        // 3. Fallback for Array format [ { ... } ]
+        const arrayRegex = /\[\s*\{[\s\S]*?["']action["']\s*:\s*["'](generate_video|generate_image)["'][\s\S]*?\}\s*\]/;
+        const arrayMatch = text.match(arrayRegex);
+        if (arrayMatch) {
+          try {
+            const arr = JSON.parse(arrayMatch[0]);
+            if (Array.isArray(arr) && arr[0]) {
+              return { data: arr[0], raw: arrayMatch[0] };
+            }
+          } catch (e) {
+            console.error("[MEDIA GEN] Array regex matched but parse failed:", e.message);
+          }
+        }
+
+        return null;
+      };
+
+      const extracted = extractActionJson(reply);
+
+      if (extracted) {
+        const { data, raw } = extracted;
+        console.log(`[MEDIA GEN] Found trigger JSON: ${raw}`);
+
+        // REMOVE processed JSON from the reply text immediately
+        reply = reply.replace(raw, '').trim();
+
+        if (data.action === 'generate_video' && data.prompt) {
+          console.log(`[VIDEO GEN] Calling generator for: ${data.prompt}`);
+          const videoUrl = await generateVideoFromPrompt(data.prompt, 5, 'medium');
+          if (videoUrl) {
+            finalResponse.videoUrl = videoUrl;
+            finalResponse.reply = (reply && reply.trim()) ? reply : `Sure, I've generated a video based on your request: "${data.prompt.substring(0, 50)}..."`;
+          } else {
+            finalResponse.reply = (reply && reply.trim()) ? reply : "I attempted to generate a video but encountered an error.";
+          }
+        }
+        else if (data.action === 'generate_image' && data.prompt) {
+          console.log(`[IMAGE GEN] Calling generator for: ${data.prompt}`);
+          // Use a shorter version of prompt for Fallback just in case
+          const safePrompt = data.prompt.length > 400 ? data.prompt.substring(0, 400) : data.prompt;
+
+          try {
+            const imageUrl = await generateImageFromPrompt(data.prompt);
+            if (imageUrl) {
+              finalResponse.imageUrl = imageUrl;
+              // Ensure reply is set, fallback to default if empty
+              finalResponse.reply = (reply && reply.trim()) ? reply : "Here is the image you requested.";
+            }
+          } catch (imgError) {
+            console.warn(`[IMAGE GEN] Vertex failed. Falling back to Pollinations.`);
+            const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 1000000)}&model=flux`;
+            finalResponse.imageUrl = pollinationsUrl;
+            finalResponse.reply = (reply && reply.trim()) ? reply : "I've generated this image for you using my fallback engine.";
+          }
         }
       }
 
@@ -494,13 +575,18 @@ router.post("/", verifyToken, async (req, res) => {
           finalResponse.imageUrl = mdMatch[1];
           // Remove the markdown tag from text to avoid double display
           reply = reply.replace(mdMatch[0], '').trim();
-          finalResponse.reply = reply;
+          finalResponse.reply = (reply && reply.trim()) ? reply : "Here is the image you requested.";
         }
       }
 
       // Final cleanup: Remove backticks if the model output the JSON inside a code block
       reply = reply.replace(/```json\s*```|```\s*```/g, '').trim();
-      finalResponse.reply = reply;
+      // Ensure finalResponse.reply has a value if we didn't hit the blocks above
+      if (!finalResponse.reply && !finalResponse.imageUrl && !finalResponse.videoUrl) {
+        finalResponse.reply = reply || "Processed your request.";
+      } else if (!finalResponse.reply) {
+        finalResponse.reply = reply; // Sync back just in case
+      }
 
     } catch (e) {
       console.warn("[MEDIA GEN] Critical failure in media handling logic:", e);

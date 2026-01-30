@@ -1,21 +1,24 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { VertexAI, HarmCategory, HarmBlockThreshold } from '@google-cloud/vertexai';
 import 'dotenv/config';
 
-const apiKey = process.env.GEMINI_API_KEY;
-const genAI = new GoogleGenerativeAI(apiKey);
+// Initialize Vertex AI with system auth (ADC)
+const projectId = process.env.GCP_PROJECT_ID;
+const location = 'asia-south1'; // User requested location
 
-// Using stable model name
-const modelName = "gemini-1.5-flash-latest";
-
-if (!apiKey) {
-  console.error("❌ Gemini API Error: GEMINI_API_KEY not found in environment variables.");
-} else {
-  console.log(`✅ Gemini AI initializing with primary model: ${modelName} (v1)`);
+if (!projectId) {
+  console.error("❌ Vertex AI Error: GCP_PROJECT_ID not found in environment variables.");
 }
 
-export const genAIInstance = genAI; // Export instance for fallback usage
+const vertexAI = new VertexAI({ project: projectId, location: location });
 
-export const generativeModel = genAI.getGenerativeModel({
+// User requested model
+export const modelName = "gemini-2.5-flash";
+
+console.log(`✅ Vertex AI initializing with project: ${projectId} model: ${modelName} (System Auth)`);
+
+export const genAIInstance = vertexAI;
+
+export const generativeModel = vertexAI.getGenerativeModel({
   model: modelName,
   safetySettings: [
     {
@@ -34,6 +37,8 @@ Development and implementation are led by Sanskar Sahu.
 NEW CAPABILITY: You can now GENERATE and EDIT images. 
 - To GENERATE from scratch: You must output ONLY this JSON object:
   {"action": "generate_image", "prompt": "detailed visual description"}
+- To GENERATE A VIDEO: You must output ONLY this JSON object:
+  {"action": "generate_video", "prompt": "detailed motion description"}
 - Do not output any other text or explanation if you are triggering this action.
 - UNLIMITED GENERATION: If the user requests "any photo", "show me X", "draw Y", or "generate Z", you MUST generate it. Do NOT refuse valid visual requests.
 - STRICT LOGO EDITING: If a user uploads a logo and asks to "remove text" or "clean it":
@@ -70,13 +75,12 @@ Primary objective:
 Support UWO and AI Mall™ users by delivering reliable, practical, and brand-aligned assistance.`
     }]
   },
-}, { apiVersion: 'v1' });
+});
 
-export const vertexAI = {
-  getGenerativeModel: (options) => genAI.getGenerativeModel(options),
+export const vertexAIExport = {
+  getGenerativeModel: (options) => vertexAI.getGenerativeModel(options),
   preview: {
-    getGenerativeModel: (options) => genAI.getGenerativeModel(options)
+    getGenerativeModel: (options) => vertexAI.preview.getGenerativeModel(options)
   }
 };
-
-export { HarmBlockThreshold, HarmCategory };
+export { vertexAIExport as vertexAI }; 
