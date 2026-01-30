@@ -10,8 +10,8 @@ import officeParser from 'officeparser';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Path to the service account key file - Using CLI auth instead
-// const keyFilename = path.join(__dirname, '../google_cloud_credentials.json');
+// Path to the service account key file
+const keyFilename = path.join(__dirname, '../google_cloud_credentials.json');
 
 // Initialize the client if key exists
 let client = null;
@@ -62,10 +62,6 @@ export const synthesizeSpeech = async (req, res) => {
             'en-US': {
                 'FEMALE': 'en-US-Neural2-F',
                 'MALE': 'en-US-Neural2-D'
-=======
-                'FEMALE': 'en-US-Neural2-F', // Optimized for storytelling
-                'MALE': 'en-US-Wavenet-D'
->>>>>>> ca4d5fff179a273aad0c9f2469954b9136dc3897
             },
             'en-IN': {
                 'FEMALE': 'en-IN-Neural2-D',
