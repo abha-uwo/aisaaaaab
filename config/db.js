@@ -13,6 +13,7 @@ const connectDB = async () => {
     const conn = await mongoose.connect(MONGO_URI, {
       serverSelectionTimeoutMS: 30000,
       socketTimeoutMS: 45000,
+      family: 4, // Force IPv4 to avoid Jio/local network IPv6 issues
     });
     logger.info(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {

@@ -82,12 +82,27 @@ export const verifyPayment = async (req, res) => {
         const { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan, amount } = req.body;
         const userId = req.user.id;
 
+        console.log('[VERIFY PAYMENT] Received data:', {
+            razorpay_order_id,
+            razorpay_payment_id,
+            razorpay_signature,
+            plan,
+            amount,
+            userId
+        });
+
         const body = razorpay_order_id + "|" + razorpay_payment_id;
 
         const expectedSignature = crypto
             .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
             .update(body.toString())
             .digest("hex");
+
+        console.log('[VERIFY PAYMENT] Signature comparison:', {
+            received: razorpay_signature,
+            expected: expectedSignature,
+            match: expectedSignature === razorpay_signature
+        });
 
         const isAuthentic = expectedSignature === razorpay_signature;
 
@@ -110,6 +125,11 @@ export const verifyPayment = async (req, res) => {
                 { new: true }
             );
 
+            if (!updatedUser) {
+                console.error('[VERIFY PAYMENT] User not found in database:', userId);
+                return res.status(404).json({ error: "User not found in database" });
+            }
+
             // Create Transaction Record
             await Transaction.create({
                 buyerId: userId,
@@ -121,11 +141,14 @@ export const verifyPayment = async (req, res) => {
                 status: 'Success'
             });
 
+            console.log('[VERIFY PAYMENT] Success - User updated:', updatedUser.email);
+
             res.status(200).json({
                 message: "Payment verified successfully",
                 user: updatedUser
             });
         } else {
+            console.error('[VERIFY PAYMENT] Signature mismatch!');
             res.status(400).json({ error: "Invalid payment signature" });
         }
 

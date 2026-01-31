@@ -48,7 +48,7 @@ const userSchema = new mongoose.Schema({
     personalizations: {
         // General Settings
         general: {
-            language: { type: String, default: 'English' },
+            language: { type: String, default: process.env.APP_DEFAULT_LANGUAGE || 'English' },
             theme: { type: String, enum: ['Light', 'Dark', 'System', 'light', 'dark', 'system'], default: 'System' },
             responseSpeed: { type: String, enum: ['Fast', 'Balanced', 'Detailed', 'fast', 'balanced', 'detailed'], default: 'Balanced' },
             screenReader: { type: Boolean, default: false },

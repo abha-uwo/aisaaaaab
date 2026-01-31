@@ -691,7 +691,11 @@ router.get('/:sessionId', verifyToken, async (req, res) => {
     // For now, finding by sessionId is okay as sessionIds are unique/random
     let session = await ChatSession.findOne({ sessionId });
 
-    if (!session) return res.status(404).json({ message: 'Session not found' });
+    if (!session) {
+      console.warn(`[CHAT] Session ${sessionId} not found in DB.`);
+      return res.status(404).json({ message: 'Session not found' });
+    }
+    console.log(`[CHAT] Found session ${sessionId} with ${session.messages?.length || 0} messages.`);
     res.json(session);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch chat history' });
@@ -753,8 +757,11 @@ router.post('/:sessionId/message', verifyToken, async (req, res) => {
       { new: true, upsert: true }
     );
 
+    console.log(`[CHAT] Saved message to session ${sessionId}. New message count: ${session.messages.length}`);
+
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ error: 'Invalid userId' });
+      console.warn(`[CHAT] userId ${userId} is not a valid ObjectId. Skipping user association.`);
+      return res.json(session);
     }
 
     await userModel.findByIdAndUpdate(
@@ -762,6 +769,7 @@ router.post('/:sessionId/message', verifyToken, async (req, res) => {
       { $addToSet: { chatSessions: session._id } },
       { new: true }
     );
+    console.log(`[CHAT] Associated session ${session._id} with user ${userId}.`);
     res.json(session);
   } catch (err) {
     console.error(err);
@@ -814,78 +822,7 @@ router.delete('/:sessionId/message/:messageId', verifyToken, async (req, res) =>
   }
 });
 
-
-// Create or Update message in session
-router.post('/:sessionId/message', verifyToken, async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { message, title } = req.body;
-    const userId = req.user.id
-
-
-    if (!message?.role || !message?.content) {
-      return res.status(400).json({ error: 'Invalid message format' });
-    }
-
-    // Cloudinary Upload Logic for Multiple Attachments
-    if (message.attachments && Array.isArray(message.attachments)) {
-      for (const attachment of message.attachments) {
-        if (attachment.url && attachment.url.startsWith('data:')) {
-          try {
-            const matches = attachment.url.match(/^data:(.+);base64,(.+)$/);
-            if (matches) {
-              const mimeType = matches[1];
-              const base64Data = matches[2];
-              const buffer = Buffer.from(base64Data, 'base64');
-
-              // Upload to Cloudinary
-              const uploadResult = await uploadToCloudinary(buffer, {
-                resource_type: 'auto',
-                folder: 'chat_attachments',
-                public_id: `chat_${sessionId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-              });
-
-              // Update attachment with Cloudinary URL
-              attachment.url = uploadResult.secure_url;
-            }
-          } catch (uploadError) {
-            console.error("Cloudinary upload failed for attachment:", uploadError);
-          }
-        }
-      }
-    }
-
-    // Check DB connection
-    if (mongoose.connection.readyState !== 1) {
-      console.warn('[DB] MongoDB unreachable. Skipping message save.');
-      return res.json({ sessionId, messages: [message], dummy: true });
-    }
-
-    const session = await ChatSession.findOneAndUpdate(
-      { sessionId },
-      {
-        $push: { messages: message },
-        $set: { lastModified: Date.now(), ...(title && { title }) }
-      },
-      { new: true, upsert: true }
-    );
-
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      // Return success if userId is not valid (e.g. fallback user) to avoid frontend crash
-      return res.json(session);
-    }
-
-    await userModel.findByIdAndUpdate(
-      userId,
-      { $addToSet: { chatSessions: session._id } },
-      { new: true }
-    );
-    res.json(session);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to save message' });
-  }
-});
+// (The POST /:sessionId/message route is defined above around line 702)
 
 router.delete('/:sessionId', verifyToken, async (req, res) => {
   try {

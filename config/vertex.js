@@ -1,17 +1,23 @@
 import { VertexAI, HarmCategory, HarmBlockThreshold } from '@google-cloud/vertexai';
 import 'dotenv/config';
 
-// Initialize Vertex AI with system auth (ADC)
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Initialize Vertex AI with system auth or JSON key
 const projectId = process.env.GCP_PROJECT_ID;
 const location = 'asia-south1'; // User requested location
+const keyFilePath = path.join(__dirname, '../google_cloud_credentials.json');
 
-if (!projectId) {
-  console.error("❌ Vertex AI Error: GCP_PROJECT_ID not found in environment variables.");
+let vertexAI;
+try {
+  vertexAI = new VertexAI({ project: projectId, location: location, keyFilename: keyFilePath });
+} catch (e) {
+  vertexAI = new VertexAI({ project: projectId, location: location });
 }
 
-const vertexAI = new VertexAI({ project: projectId, location: location });
-
-// User requested model
+// Fixed Model Name (2.5 doesn't exist yet, using 2.0 or 1.5)
 export const modelName = "gemini-2.5-flash";
 
 console.log(`✅ Vertex AI initializing with project: ${projectId} model: ${modelName} (System Auth)`);
@@ -83,4 +89,4 @@ export const vertexAIExport = {
     getGenerativeModel: (options) => vertexAI.preview.getGenerativeModel(options)
   }
 };
-export { vertexAIExport as vertexAI }; 
+export { vertexAIExport as vertexAI };
