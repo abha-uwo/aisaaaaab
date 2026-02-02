@@ -660,7 +660,7 @@ router.get('/', verifyToken, async (req, res) => {
 
     const user = await userModel.findById(userId).populate({
       path: 'chatSessions',
-      select: 'sessionId title lastModified',
+      select: 'sessionId title lastModified userId',
       options: { sort: { lastModified: -1 } }
     });
 
@@ -668,7 +668,19 @@ router.get('/', verifyToken, async (req, res) => {
       console.warn(`[CHAT SESSION] User ${userId} not found in DB. Returning empty sessions.`);
       return res.json([]);
     }
-    res.json(user.chatSessions || []);
+
+    // Filter out nulls and potentially sessions that don't belong to this user if somehow leaked
+    const validSessions = (user.chatSessions || []).filter(s => s !== null);
+
+    // Minor optimization: If any session is missing userId, update it (Legacy fix)
+    const orphans = validSessions.filter(s => !s.userId);
+    if (orphans.length > 0) {
+      const orphanIds = orphans.map(s => s._id);
+      await ChatSession.updateMany({ _id: { $in: orphanIds } }, { $set: { userId } });
+      console.log(`[CHAT] Fixed ${orphans.length} orphaned sessions for user ${userId}`);
+    }
+
+    res.json(validSessions);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch sessions' });
@@ -687,14 +699,20 @@ router.get('/:sessionId', verifyToken, async (req, res) => {
       return res.json({ sessionId, messages: [] });
     }
 
-    // Optional: Verify that the session belongs to this user
-    // For now, finding by sessionId is okay as sessionIds are unique/random
+    // Verify that the session belongs to this user
     let session = await ChatSession.findOne({ sessionId });
 
     if (!session) {
       console.warn(`[CHAT] Session ${sessionId} not found in DB.`);
       return res.status(404).json({ message: 'Session not found' });
     }
+
+    // Assign userId if it's missing (legacy support)
+    if (!session.userId) {
+      session.userId = userId;
+      await session.save();
+    }
+
     console.log(`[CHAT] Found session ${sessionId} with ${session.messages?.length || 0} messages.`);
     res.json(session);
   } catch (err) {
@@ -752,7 +770,11 @@ router.post('/:sessionId/message', verifyToken, async (req, res) => {
       { sessionId },
       {
         $push: { messages: message },
-        $set: { lastModified: Date.now(), ...(title && { title }) }
+        $set: {
+          lastModified: Date.now(),
+          userId: userId, // Ensure userId is always set/updated
+          ...(title && { title })
+        }
       },
       { new: true, upsert: true }
     );
@@ -829,22 +851,34 @@ router.patch('/:sessionId/title', verifyToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { title } = req.body;
+    const userId = req.user.id;
 
     if (!title) return res.status(400).json({ error: 'Title is required' });
 
     if (mongoose.connection.readyState !== 1) {
-      return res.json({ message: 'Title updated (Mock)' });
+      console.warn('[DB] MongoDB unreachable during rename.');
+      return res.status(503).json({ error: 'Database unavailable' });
     }
 
+    // Update session: search by sessionId AND (either matching userId or no userId yet)
     const session = await ChatSession.findOneAndUpdate(
-      { sessionId },
-      { $set: { title, lastModified: Date.now() } },
+      {
+        sessionId,
+        $or: [{ userId: userId }, { userId: { $exists: false } }]
+      },
+      { $set: { title, lastModified: Date.now(), userId: userId } },
       { new: true }
     );
 
-    if (!session) return res.status(404).json({ error: 'Session not found' });
+    if (!session) {
+      console.warn(`[CHAT] Rename failed: Session ${sessionId} not found or not owned by ${userId}`);
+      return res.status(404).json({ error: 'Session not found or access denied' });
+    }
+
+    console.log(`[CHAT] Successfully renamed session ${sessionId} to "${title}" for user ${userId}`);
     res.json(session);
   } catch (err) {
+    console.error(`[CHAT RENAME ERROR] ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

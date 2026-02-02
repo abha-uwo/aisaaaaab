@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema({
         default: "user"
     },
     chatSessions: [{ type: mongoose.Schema.Types.ObjectId, ref: "ChatSession" }],
-    verificationCode: Number,
+    verificationCode: String,
     isBlocked: {
         type: Boolean,
         default: false
