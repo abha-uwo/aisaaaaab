@@ -340,13 +340,52 @@ Do not output any other text or explanation if you are triggering these actions.
       console.log('[FILE CONVERSION] AI Response:', aiResponse);
 
       // Try to extract JSON from AI response (handle markdown backticks too)
-      const jsonRegex = /```(?:json)?\s*(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})\s*```|(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})/;
-      const jsonMatch = aiResponse.match(jsonRegex);
+      let jsonMatch = null;
+      let conversionParams = null;
 
-      if (jsonMatch && allAttachments.length > 0) {
+      // 1. Try Code Block Regex
+      const codeBlockRegex = /```(?:json)?\s*(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})\s*```/;
+      const codeBlockMatch = aiResponse.match(codeBlockRegex);
+
+      if (codeBlockMatch) {
         try {
-          const rawJson = jsonMatch[1] || jsonMatch[2];
-          const conversionParams = JSON.parse(rawJson);
+          conversionParams = JSON.parse(codeBlockMatch[1]);
+          jsonMatch = { 1: codeBlockMatch[1] }; // Mock match object for existing logic compatibility
+        } catch (e) { console.warn("[FILE CONVERSION] Code block parse failed", e); }
+      }
+
+      // 2. Try Raw JSON Regex (if no code block)
+      if (!conversionParams) {
+        const rawJsonRegex = /(\{[\s\S]*?"action":\s*"file_conversion"[\s\S]*?\})/;
+        const rawMatch = aiResponse.match(rawJsonRegex);
+        if (rawMatch) {
+          try {
+            conversionParams = JSON.parse(rawMatch[1]);
+            jsonMatch = { 1: rawMatch[1] };
+          } catch (e) { console.warn("[FILE CONVERSION] Raw regex parse failed", e); }
+        }
+      }
+
+      // 3. Fallback: Find first '{' and last '}'
+      if (!conversionParams) {
+        try {
+          const firstBrace = aiResponse.indexOf('{');
+          const lastBrace = aiResponse.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace > firstBrace) {
+            const potentialJson = aiResponse.substring(firstBrace, lastBrace + 1);
+            const parsed = JSON.parse(potentialJson);
+            if (parsed.action === 'file_conversion') {
+              conversionParams = parsed;
+              jsonMatch = { 1: potentialJson };
+            }
+          }
+        } catch (e) {
+          console.warn("[FILE CONVERSION] Fallback parse failed", e);
+        }
+      }
+
+      if (conversionParams && allAttachments.length > 0) {
+        try {
           console.log('[FILE CONVERSION] Parsed params:', conversionParams);
 
           // Get the first attachment (assuming single file conversion)
@@ -384,7 +423,9 @@ Do not output any other text or explanation if you are triggering these actions.
             mimeType: conversionParams.target_format === 'pdf'
               ? 'application/pdf'
               : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            message: aiResponse.replace(jsonMatch[0], '').trim()
+            message: (jsonMatch && jsonMatch[1])
+              ? aiResponse.replace(jsonMatch[1], '').replace(/```json|```/g, '').trim()
+              : "Here is your converted document."
           };
 
           console.log('[FILE CONVERSION] Conversion successful:', outputFileName);

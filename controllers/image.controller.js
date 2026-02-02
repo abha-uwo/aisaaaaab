@@ -6,12 +6,19 @@ import { GoogleAuth } from 'google-auth-library';
 // Helper function to generate image using Vertex AI (Imagen 3)
 export const generateImageFromPrompt = async (prompt) => {
     try {
-        logger.info(`[VERTEX IMAGE] Attempting generation for: "${prompt}"`);
+        console.log(`[VERTEX IMAGE] Triggered for: "${prompt}"`);
+
+        // Check if we have credentials to even attempt Vertex
+        // If not, skip directly to fallback to save time and error logs
+        if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GCP_PROJECT_ID) {
+            throw new Error("Missing GCP Credentials/Project ID - Skipping Vertex");
+        }
 
         const auth = new GoogleAuth({
             scopes: 'https://www.googleapis.com/auth/cloud-platform',
             projectId: process.env.GCP_PROJECT_ID || process.env.PROJECT_ID
         });
+
         const client = await auth.getClient();
         const projectId = await auth.getProjectId();
         const accessTokenResponse = await client.getAccessToken();
@@ -38,7 +45,7 @@ export const generateImageFromPrompt = async (prompt) => {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: 25000 // 25s timeout
             }
         );
 
@@ -57,23 +64,38 @@ export const generateImageFromPrompt = async (prompt) => {
             }
         }
 
-        throw new Error('Vertex AI did not return image data.');
+        throw new Error('Vertex AI did not return valid image data.');
 
     } catch (error) {
-        logger.warn(`[VERTEX IMAGE FALLBACK] ${error.message}. Using Pollinations.`);
+        const errorMsg = error.message || "Unknown error";
+        console.warn(`[VERTEX IMAGE FALLBACK] Reason: ${errorMsg}. Switching to Pollinations.`);
+
         // Robust Fallback to Pollinations with Flux model
-        const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&model=flux&seed=${Math.floor(Math.random() * 1000000)}`;
+        // Flux is the best free model available on Pollinations currently
+        const safePrompt = encodeURIComponent(prompt.substring(0, 500)); // Safety limit
+        const pollinationsUrl = `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=1024&nologo=true&model=flux&seed=${Math.floor(Math.random() * 1000000)}`;
 
         // Optionally upload pollinations image to Cloudinary to make it permanent
+        // This is important because Pollinations links can be slow or expire
         try {
-            const resp = await axios.get(pollinationsUrl, { responseType: 'arraybuffer' });
+            console.log(`[PROXY DOWNLOAD] Fetching from Pollinations: ${pollinationsUrl}`);
+            const resp = await axios.get(pollinationsUrl, {
+                responseType: 'arraybuffer',
+                timeout: 15000
+            });
+
+            console.log(`[PROXY UPLOAD] Uploading to Cloudinary...`);
             const cloudResult = await uploadToCloudinary(Buffer.from(resp.data), {
                 folder: 'generated_images',
                 public_id: `poll_${Date.now()}`
             });
+            console.log(`[PROXY SUCCESS] URL: ${cloudResult.secure_url}`);
             return cloudResult.secure_url;
+
         } catch (e) {
-            return pollinationsUrl; // Return direct link if upload fails
+            console.error(`[PROXY FAILED] ${e.message}. Returning direct link.`);
+            // Fallback to direct link if upload fails
+            return pollinationsUrl;
         }
     }
 };
@@ -89,19 +111,27 @@ export const generateImage = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Prompt is required' });
         }
 
-        logger.info(`[Image Generation] Generating image for prompt: "${prompt}"`);
+        if (logger && logger.info) logger.info(`[Image Generation] Processing: "${prompt}"`);
+        else console.log(`[Image Generation] Processing: "${prompt}"`);
 
         const imageUrl = await generateImageFromPrompt(prompt);
+
+        if (!imageUrl) {
+            throw new Error("Failed to retrieve image URL from any source.");
+        }
 
         res.status(200).json({
             success: true,
             data: imageUrl
         });
     } catch (error) {
-        logger.error(`[Image Generation] Error: ${error.message}`);
+        if (logger && logger.error) logger.error(`[Image Generation] Critical Error: ${error.message}`);
+        else console.error(`[Image Generation] Critical Error`, error);
+
         res.status(500).json({
             success: false,
             message: `Image generation failed: ${error.message}`
         });
     }
 };
+

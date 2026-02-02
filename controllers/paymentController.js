@@ -27,10 +27,10 @@ export const createOrder = async (req, res) => {
                 amount = 0;
                 break;
             case 'pro':
-                amount = 499;
+                amount = 2;
                 break;
             case 'king':
-                amount = 1499;
+                amount = 5;
                 break;
             default:
                 return res.status(400).json({ error: "Invalid plan selected" });

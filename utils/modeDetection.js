@@ -195,8 +195,8 @@ CRITICAL INSTRUCTIONS:
      - If source is DOCX -> Target is PDF
 
 OUTPUT FORMAT (STRICT JSON ONLY):
-Do not speak. Do not add markdown text outside the JSON.
-Output EXACTLY this JSON structure:
+Do NOT speak. Do NOT add markdown text outside the JSON. Do NOT start with "Here is the JSON".
+Output ONLY this JSON structure:
 
 {
   "action": "file_conversion",
@@ -212,7 +212,7 @@ Output: {"action": "file_conversion", "source_format": "pdf", "target_format": "
 User: "make pdf" (Attached: letter.docx)
 Output: {"action": "file_conversion", "source_format": "docx", "target_format": "pdf", "file_name": "letter.docx"}
 
-${languageRule}`;
+END OF INSTRUCTION. OUTPUT ONLY JSON.`;
 
     case MODES.CONTENT_WRITING:
       return `${baseIdentity}
